@@ -48,7 +48,10 @@ Ensure you have the following installed on your system:
    The backend API will be available at `http://localhost:8000/`
 
 4. **Swagger API Documentation:**
-   The swagger API will be available at ``
+   The swagger API will be available at `http://localhost:8000/api/schema/swagger-ui/`
+
+5 **Create a .env file:**
+   Create a .env file which is same as .env-example
 
 
 
