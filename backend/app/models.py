@@ -109,19 +109,101 @@ class Employee(models.Model):
     
     def can_apply_leave(self, start_date, end_date, leave_type):
         """
-        Validate if this employee can apply for the given leave.
-        Return (True, None) if allowed, otherwise (False, 'reason message').
+        Check if employee can apply for leave based on available balance
+        Returns (can_apply: bool, errors: list)
         """
-
-        # Example: Prevent overlapping leaves
-        overlapping = self.leaves.filter(
+        errors = []
+        
+        # Calculate requested days
+        requested_days = (end_date - start_date).days + 1
+        year = start_date.year
+        
+        # Get or create leave balance for this year and leave type
+        try:
+            leave_balance = self.leave_balances.get(
+                leave_type=leave_type, 
+                year=year
+            )
+            available_balance = leave_balance.balance
+        except LeaveBalance.DoesNotExist:
+            # If no balance exists, create one with max_allocation from leave_type
+            available_balance = leave_type.annual_allocation
+            LeaveBalance.objects.create(
+                employee=self,
+                leave_type=leave_type,
+                year=year,
+                balance=available_balance
+            )
+        
+        # Calculate already consumed leave for this year and type
+        consumed_days = self.leaves.filter(
+            leave_type=leave_type,
+            year=year,
+            status='APPROVED'
+        ).aggregate(
+            total=models.Sum('days_requested')
+        )['total'] or 0
+        
+        # Calculate remaining balance
+        remaining_balance = available_balance - consumed_days
+        
+        # Validate if enough balance is available
+        if requested_days > remaining_balance:
+            errors.append(
+                f"Insufficient leave balance. Requested: {requested_days} days, "
+                f"Available: {remaining_balance} days for {leave_type.name} in {year}"
+            )
+        
+        # Additional validations
+        if requested_days <= 0:
+            errors.append("Leave duration must be at least 1 day")
+        
+        if start_date < timezone.now().date():
+            errors.append("Cannot apply for leave in the past")
+        
+        if end_date < start_date:
+            errors.append("End date cannot be before start date")
+        
+        # Check for overlapping approved leaves
+        overlapping_leaves = self.leaves.filter(
             start_date__lte=end_date,
-            end_date__gte=start_date
-        )
-        if overlapping.exists():
-            return False, "You already have leave in this period."
-
-        return True, None
+            end_date__gte=start_date,
+            status='APPROVED'
+        ).exclude(pk=getattr(self, 'pk', None))  # Exclude current leave if updating
+        
+        if overlapping_leaves.exists():
+            errors.append("Leave dates overlap with existing approved leave")
+        
+        return len(errors) == 0, errors
+    
+    def get_leave_balance(self, leave_type, year=None):
+        """Get current leave balance for a specific leave type and year"""
+        if year is None:
+            year = timezone.now().year
+        
+        try:
+            leave_balance = self.leave_balances.get(
+                leave_type=leave_type,
+                year=year
+            )
+            available_balance = leave_balance.balance
+        except LeaveBalance.DoesNotExist:
+            available_balance = leave_type.annual_allocation
+        
+        # Calculate consumed leave
+        consumed_days = self.leaves.filter(
+            leave_type=leave_type,
+            year=year,
+            status='APPROVED'
+        ).aggregate(
+            total=models.Sum('days_requested')
+        )['total'] or 0
+        
+        return {
+            'total_allocation': available_balance,
+            'consumed': consumed_days,
+            'remaining': available_balance - consumed_days
+        }
 
 
 class EmployeeStatus(models.Model):
@@ -265,15 +347,14 @@ class LeaveManagement(models.Model):
     leave_type = models.ForeignKey(LeaveType, on_delete=models.CASCADE, related_name="leave_applications")
     start_date = models.DateField()
     end_date = models.DateField()
-    days_requested = models.IntegerField(editable=False)  # Auto-calculated
+    days_requested = models.IntegerField(editable=False)
     reason = models.TextField()
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="PENDING")
     applied_on = models.DateTimeField(auto_now_add=True)
     validated_on = models.DateTimeField(null=True, blank=True)
     comments = models.TextField(blank=True, null=True)
-    rejection_reason = models.TextField(blank=True, null=True)  # store rejection reason if any
-    year = models.IntegerField(editable=False, db_index=True,null = False,blank=False)
-
+    rejection_reason = models.TextField(blank=True, null=True)
+    year = models.IntegerField(editable=False, db_index=True, null=False, blank=False)
 
     class Meta:
         db_table = 'leave_management'
@@ -283,7 +364,7 @@ class LeaveManagement(models.Model):
         indexes = [
             models.Index(fields=['employee', 'status']),
             models.Index(fields=['start_date', 'end_date']),
-            models.Index(fields=['status','year']),
+            models.Index(fields=['status', 'year']),
         ]
 
     def __str__(self):
@@ -291,15 +372,14 @@ class LeaveManagement(models.Model):
 
     def clean(self):
         """Validate leave application"""
-        # Calculate days requested
         if self.start_date and self.end_date:
             self.days_requested = (self.end_date - self.start_date).days + 1
             self.year = self.start_date.year
 
-
         if self.days_requested <= 0:
             raise ValidationError("End date must be after start date")
     
+        # Only validate balance for new applications or pending status
         if self.employee and self.start_date and self.end_date and self.leave_type:
             if self.status == 'PENDING' or not self.pk:
                 can_apply, errors = self.employee.can_apply_leave(
@@ -309,24 +389,38 @@ class LeaveManagement(models.Model):
                     raise ValidationError({"__all__": errors})
 
     def save(self, *args, **kwargs):
+        # Always calculate days and year
         if self.start_date and self.end_date:
             self.days_requested = (self.end_date - self.start_date).days + 1
             self.year = self.start_date.year
 
+        # Only validate for new applications or pending status
         if self.status == 'PENDING' or not self.pk:
             self.full_clean()
 
         super().save(*args, **kwargs)
 
     def approve(self, comments=None):
-        """Approve the leave application"""
+        """Approve the leave application and update leave balance"""
         if self.status != 'PENDING':
             raise ValidationError("Only pending leaves can be approved")
 
+        # Double-check balance before approval
+        can_apply, errors = self.employee.can_apply_leave(
+            self.start_date, self.end_date, self.leave_type
+        )
+        if not can_apply:
+            raise ValidationError(f"Cannot approve: {', '.join(errors)}")
+
         self.status = 'APPROVED'
+        self.validated_on = timezone.now()
         if comments:
             self.comments = comments
-        self.save(update_fields=['status', 'comments'])
+        
+        # Deduct from leave balance
+        self._update_leave_balance(-self.days_requested)
+        
+        self.save(update_fields=['status', 'comments', 'validated_on'])
 
     def reject(self, rejection_reason):
         """Reject the leave application"""
@@ -338,7 +432,8 @@ class LeaveManagement(models.Model):
 
         self.status = 'REJECTED'
         self.rejection_reason = rejection_reason
-        self.save(update_fields=['status', 'rejection_reason'])
+        self.validated_on = timezone.now()
+        self.save(update_fields=['status', 'rejection_reason', 'validated_on'])
 
     def cancel(self, cancelled_by=None):
         """Cancel the leave application"""
@@ -348,10 +443,29 @@ class LeaveManagement(models.Model):
         if self.status == 'APPROVED' and self.start_date <= timezone.now().date():
             raise ValidationError("Cannot cancel leave that has already started")
 
+        old_status = self.status
         self.status = 'CANCELLED'
+        
         if cancelled_by:
             self.comments = f"Cancelled by {cancelled_by.emp_name} on {timezone.now().date()}"
+        
+        # If was approved, restore the leave balance
+        if old_status == 'APPROVED':
+            self._update_leave_balance(self.days_requested)
+        
         self.save(update_fields=['status', 'comments'])
+
+    def _update_leave_balance(self, days_change):
+        """Update leave balance - positive to add, negative to subtract"""
+        leave_balance, created = LeaveBalance.objects.get_or_create(
+            employee=self.employee,
+            leave_type=self.leave_type,
+            year=self.year,
+            defaults={'balance': self.leave_type.annual_allocation}
+        )
+        
+        leave_balance.balance += days_change
+        leave_balance.save(update_fields=['balance'])
 
     def can_be_cancelled(self):
         """Check if leave can be cancelled"""

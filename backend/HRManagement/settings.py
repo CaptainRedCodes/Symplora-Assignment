@@ -84,7 +84,7 @@ WSGI_APPLICATION = 'HRManagement.wsgi.application'
 #         'ENGINE': 'django.db.backends.postgresql',
 #         'NAME': 'Symplora2',
 #         'USER': 'postgres',
-#         'PASSWORD': 'Kayambody@15',
+#         'PASSWORD': 'enter_your_password',
 #         'HOST': 'localhost',
 #         'PORT': '5432',
 #     }
