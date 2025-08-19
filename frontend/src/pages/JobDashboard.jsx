@@ -264,6 +264,7 @@ export default function JobsDashboard() {
                   <TableRow>
                     <TableHead>Job Title</TableHead>
                     <TableHead>Department</TableHead>
+                    <TableHead>Job Description</TableHead>
                     <TableHead className="w-24">Status</TableHead>
                     <TableHead className="w-32 text-right">Actions</TableHead>
                   </TableRow>
@@ -273,6 +274,7 @@ export default function JobsDashboard() {
                     <TableRow key={job.job_id} className="hover:bg-gray-50">
                       <TableCell className="font-medium">{job.job_title}</TableCell>
                       <TableCell>{job.dept?.dept_name || "No Department"}</TableCell>
+                      <TableCell className="font-medium">{job.job_description}</TableCell>
                       <TableCell>
                         <span
                           className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${job.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"

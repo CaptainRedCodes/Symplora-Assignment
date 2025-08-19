@@ -25,9 +25,7 @@ class EmployeeDeptSerializer(serializers.ModelSerializer):
         return value
 
 class JobSerializer(serializers.ModelSerializer):
-    # Nested read-only serializer for displaying department info
     dept = EmployeeDeptSerializer(read_only=True)
-    # Write-only field for creating/updating department by ID
     department_id = serializers.UUIDField(write_only=True, required=True)
 
     class Meta:
@@ -35,8 +33,8 @@ class JobSerializer(serializers.ModelSerializer):
         fields = [
             'job_id',
             'job_title',
-            'dept',            # read-only nested
-            'department_id',   # write-only for input
+            'dept',            
+            'department_id',   
             'job_description',
             'is_active',
             'created_at',
@@ -117,7 +115,7 @@ class AssignJobSerializer(serializers.Serializer):
 
 
 class EmployeeListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for employee lists with current job"""
+   
     current_job = serializers.SerializerMethodField()
 
     class Meta:
@@ -133,7 +131,6 @@ class EmployeeListSerializer(serializers.ModelSerializer):
 
 
 class EmployeeDetailSerializer(serializers.ModelSerializer):
-    """Detailed serializer for single employee view"""
     current_status = serializers.SerializerMethodField()
     job_history = serializers.SerializerMethodField()
 
@@ -156,7 +153,7 @@ class EmployeeDetailSerializer(serializers.ModelSerializer):
 
 
 class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for creating/updating employees"""
+    
     resignation_date = serializers.DateField(
         input_formats=['%Y-%m-%d'],
         required=False,  
@@ -230,8 +227,7 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
 
 
 class LeaveManagementSerializer(serializers.ModelSerializer):
-    """Serializer for Leave Management with validation"""
-
+   
     # Nested serializers for read operations
     employee_details = serializers.SerializerMethodField()
     leave_type_details = LeaveTypeSerializer(source='leave_type', read_only=True)
@@ -267,7 +263,7 @@ class LeaveManagementSerializer(serializers.ModelSerializer):
             'start_date': {'required': True},
             'end_date': {'required': True},
             'leave_type': {'required': True},
-            'reason': {'required': True, 'allow_blank': False},
+            'reason': {'required': True, 'allow_blank': True},
             'days_requested': {'required': True, 'min_value': 0.5},
         }
 
@@ -357,7 +353,7 @@ class LeaveManagementSerializer(serializers.ModelSerializer):
     def validate_reason(self, value):
         if not value or not value.strip():
             raise serializers.ValidationError('Reason cannot be empty.')
-        if len(value.strip()) < 10:
+        if len(value.strip()) < 1:
             raise serializers.ValidationError('Please provide a more detailed reason (min 10 chars).')
         return value.strip()
 
@@ -407,13 +403,13 @@ class LeaveManagementSerializer(serializers.ModelSerializer):
 
 
 class LeaveManagementCreateSerializer(LeaveManagementSerializer):
-    """Serializer for creating leave applications"""
+   
     class Meta(LeaveManagementSerializer.Meta):
         fields = ['employee', 'leave_type', 'start_date', 'end_date', 'days_requested', 'reason']
 
 
 class LeaveManagementUpdateSerializer(LeaveManagementSerializer):
-    """Serializer for updating pending leave applications"""
+    
     class Meta(LeaveManagementSerializer.Meta):
         fields = ['leave_type', 'start_date', 'end_date', 'days_requested', 'reason']
 
@@ -424,12 +420,12 @@ class LeaveManagementUpdateSerializer(LeaveManagementSerializer):
 
 
 class LeaveApprovalSerializer(serializers.Serializer):
-    """Serializer for leave approval"""
+    
     comments = serializers.CharField(max_length=500, required=False, allow_blank=True)
 
 
 class LeaveRejectionSerializer(serializers.Serializer):
-    """Serializer for leave rejection"""
+    
     rejection_reason = serializers.CharField(max_length=500, required=True)
     
     def validate_rejection_reason(self, value):
@@ -437,15 +433,10 @@ class LeaveRejectionSerializer(serializers.Serializer):
             raise serializers.ValidationError('Rejection reason is required.')
         return value.strip()
 
-
 class EmployeeLeaveBalanceSummarySerializer(serializers.Serializer):
-    """Summary of leave balances per employee per year"""
-    
-    DEFAULT_ANNUAL_ALLOCATION = 20
-
+   
     employee = serializers.SerializerMethodField()
-    year = serializers.IntegerField()
-    balances = serializers.SerializerMethodField()
+    yearly_balances = serializers.SerializerMethodField()
 
     def get_employee(self, obj):
         emp = obj['employee']
@@ -455,27 +446,5 @@ class EmployeeLeaveBalanceSummarySerializer(serializers.Serializer):
             'email': emp.email
         }
 
-    def get_balances(self, obj):
-        employee = obj['employee']
-        year = obj['year']
-        balances = []
-
-        leave_types = LeaveType.objects.filter(is_active=True)
-        for leave_type in leave_types:
-            allocated_days = getattr(leave_type, 'annual_allocation', self.DEFAULT_ANNUAL_ALLOCATION)
-
-            used_leaves = employee.leaves.filter(
-                leave_type=leave_type,
-                status='APPROVED',
-                start_date__year=year
-            ).aggregate(total=Sum('days_requested'))['total'] or 0
-
-            balances.append({
-                'leave_type_id': str(leave_type.pk),
-                'leave_type_name': getattr(leave_type, 'leave_name', 'Unknown'),
-                'allocated_days': allocated_days,
-                'used_days': float(used_leaves),
-                'available_days': max(0, allocated_days - used_leaves)
-            })
-
-        return balances
+    def get_yearly_balances(self, obj):
+        return obj.get('yearly_balances', [])

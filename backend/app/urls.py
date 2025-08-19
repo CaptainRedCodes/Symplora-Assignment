@@ -15,7 +15,4 @@ router.register(r'leave-balances', views.EmployeeLeaveBalanceViewSet, basename='
 
 urlpatterns = [
     path('api/', include(router.urls)),
-    # Lookup endpoints
-    #path('api/departments/', views.DepartmentListView.as_view(), name='department-list'),
-    # Leave balance endpoints
 ]

@@ -122,7 +122,6 @@ const LeaveDashboard = () => {
 
   // -------- Actions --------
   const handleCreateLeave = async () => {
-    // small guard: end >= start
     if (newLeave.start_date && newLeave.end_date) {
       const s = new Date(newLeave.start_date);
       const e = new Date(newLeave.end_date);
@@ -517,7 +516,6 @@ useEffect(() => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-4">
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <Calendar className="text-black-600" />
               Leave Management System
             </h1>
           </div>

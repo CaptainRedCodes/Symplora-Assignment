@@ -272,6 +272,8 @@ class LeaveManagement(models.Model):
     validated_on = models.DateTimeField(null=True, blank=True)
     comments = models.TextField(blank=True, null=True)
     rejection_reason = models.TextField(blank=True, null=True)  # store rejection reason if any
+    year = models.IntegerField(editable=False, db_index=True,null = False,blank=False)
+
 
     class Meta:
         db_table = 'leave_management'
@@ -281,7 +283,7 @@ class LeaveManagement(models.Model):
         indexes = [
             models.Index(fields=['employee', 'status']),
             models.Index(fields=['start_date', 'end_date']),
-            models.Index(fields=['status']),
+            models.Index(fields=['status','year']),
         ]
 
     def __str__(self):
@@ -292,7 +294,12 @@ class LeaveManagement(models.Model):
         # Calculate days requested
         if self.start_date and self.end_date:
             self.days_requested = (self.end_date - self.start_date).days + 1
+            self.year = self.start_date.year
 
+
+        if self.days_requested <= 0:
+            raise ValidationError("End date must be after start date")
+    
         if self.employee and self.start_date and self.end_date and self.leave_type:
             if self.status == 'PENDING' or not self.pk:
                 can_apply, errors = self.employee.can_apply_leave(
@@ -304,6 +311,7 @@ class LeaveManagement(models.Model):
     def save(self, *args, **kwargs):
         if self.start_date and self.end_date:
             self.days_requested = (self.end_date - self.start_date).days + 1
+            self.year = self.start_date.year
 
         if self.status == 'PENDING' or not self.pk:
             self.full_clean()

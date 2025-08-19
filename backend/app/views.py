@@ -10,8 +10,8 @@ from django.db import transaction
 from django_filters import FilterSet, CharFilter
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db.models import Sum
-from django.db.models import Q
-from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 from .models import (
     Employee, EmployeeDepartment, 
     Job, EmployeeStatus, LeaveType, LeaveBalance, LeaveManagement
@@ -184,6 +184,7 @@ class JobFilter(FilterSet):
 
 
 class JobViewSet(ModelViewSet):
+    """Custom filter for Job View"""
     queryset = Job.objects.select_related('dept').prefetch_related('employee_statuses')
     lookup_field = 'job_id'
     serializer_class = JobSerializer
@@ -246,6 +247,7 @@ class LeaveTypeViewSet(ModelViewSet):
 
 
 class LeaveManagementViewSet(ModelViewSet):
+    """View Set of Leaveme Mgmt"""
     queryset = LeaveManagement.objects.all()
     serializer_class = LeaveManagementSerializer
 
@@ -285,49 +287,59 @@ class LeaveManagementViewSet(ModelViewSet):
         except ValidationError as e:
             return Response({"error": e.message_dict if hasattr(e, "message_dict") else e.messages}, status=status.HTTP_400_BAD_REQUEST)
         
+
 class EmployeeLeaveBalanceViewSet(viewsets.ViewSet):
     """
-    Return leave balances per employee per year
+    Return leave balances per employee, optionally filtered by year.
     """
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('year', OpenApiTypes.INT, description='Year to filter leave balances')
+        ]
+    )
     def retrieve(self, request, pk=None):
-        """
-        GET /api/leave-balances/<emp_id>/
-        """
         try:
             emp = Employee.objects.get(emp_id=pk)
         except Employee.DoesNotExist:
             return Response({"detail": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        year = int(request.query_params.get('year', 2025))
+        year = request.query_params.get('year', None)
         leave_types = LeaveType.objects.filter(is_active=True)
 
-        # Aggregate approved leaves by leave type
-        leave_usages = LeaveManagement.objects.filter(
-            employee=emp,
-            status='APPROVED',
-            start_date__year=year
-        ).values('leave_type').annotate(total_used=Sum('days_requested'))
+        if year:
+            leave_usages = LeaveManagement.objects.filter(
+                employee=emp,
+                status='APPROVED',
+                start_date__year=year
+            ).values('leave_type').annotate(total_used=Sum('days_requested'))
+        else:
+            leave_usages = LeaveManagement.objects.filter(
+                employee=emp,
+                status='APPROVED'
+            ).values('leave_type').annotate(total_used=Sum('days_requested'))
 
-        # Map: leave_type_id -> used_days
         usage_dict = {entry['leave_type']: float(entry['total_used']) for entry in leave_usages}
 
-        balances = []
-        for lt in leave_types:
-            used_days = usage_dict.get(lt.leave_type_id, 0)
-            balances.append({
+        balances = [
+            {
                 'leave_type_id': str(lt.leave_type_id),
                 'leave_type_name': lt.leave_name,
                 'allocated_days': lt.annual_allocation,
-                'used_days': used_days,
-                'available_days': max(0, lt.annual_allocation - used_days)
-            })
+                'used_days': usage_dict.get(lt.leave_type_id, 0),
+                'available_days': max(0, lt.annual_allocation - usage_dict.get(lt.leave_type_id, 0))
+            }
+            for lt in leave_types
+        ]
 
         result = {
-            'employee': emp,
-            'year': year,
+            'employee': {
+                'emp_id': str(emp.emp_id),
+                'emp_name': emp.emp_name,
+                'email': emp.email
+            },
+            'year': year if year else 'All Years',
             'balances': balances
         }
 
-        serializer = EmployeeLeaveBalanceSummarySerializer(result)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(result, status=status.HTTP_200_OK)
