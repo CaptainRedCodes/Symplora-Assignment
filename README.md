@@ -1,4 +1,4 @@
-# Employee Leave Management System
+# Symplora Leave Management System
 
 ## Project Overview
 
