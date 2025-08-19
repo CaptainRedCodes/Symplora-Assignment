@@ -1,0 +1,44 @@
+
+services:
+  db:
+    image: postgres:15
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+      build: ./backend
+      container_name: django_backend
+      restart: always
+      env_file:
+        - ./.env  # if your .env is one level up
+      command: >
+        sh -c "python manage.py migrate &&
+              python manage.py collectstatic --noinput &&
+              gunicorn HRManagement.wsgi:application --bind 0.0.0.0:8000"
+      volumes:
+        - ./backend:/app   # 👈 mount backend only (correct for your structure)
+      ports:
+        - "8000:8000"
+      depends_on:
+        - db
+
+
+  frontend:
+    build: ./frontend
+    container_name: react_frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
